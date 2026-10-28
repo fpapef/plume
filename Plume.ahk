@@ -13,7 +13,7 @@ Persistent
 ; =============================================================================
 
 global APP := "Plume"
-global VERSION := "1.2"
+global VERSION := "1.3"
 global MOTEURS := ["groq", "mistral", "gemini", "claude"]   ; ordre d'essai en secours
 global FICHIER_INI := A_ScriptDir "\plume.ini"
 global DOSSIER_TMP := A_Temp "\Plume"
@@ -32,6 +32,7 @@ global gMoteurUtilise := ""    ; moteur qui a réellement répondu
 global gSurvols := Map()       ; contrôles avec effet de survol : hwnd -> {entrer, sortir}
 global gCliquables := Map()    ; contrôles cliquables : hwnd -> true (curseur main)
 global gSurvolEntree := 0      ; élément actuellement survolé
+global gRoue := 0              ; roue de sélection ouverte
 
 ; Couleurs de l'interface (thème sombre, assorti à l'icône)
 global TH := {fond: "0F1226", barre: "0B0E1F", navSel: "1E2450", navSurvol: "161B38"
@@ -70,27 +71,27 @@ global CONSIGNE_SYSTEME := ""
 ;  Les actions du menu (dans l'ordre d'affichage, "-" = séparateur)
 ; ---------------------------------------------------------------------------
 global ACTIONS := [
-    {id: "corriger", nom: "Corriger les fautes"
+    {id: "corriger", nom: "Corriger les fautes", court: "Corriger", ico: 0xE73E
         , consigne: "Corrige uniquement l'orthographe, la grammaire, la conjugaison, les accords, les accents et la ponctuation. Ne change ni le sens, ni le ton, ni le style, ni l'ordre des phrases. Fais le minimum de modifications."},
-    {id: "ameliorer", nom: "Améliorer le vocabulaire"
+    {id: "ameliorer", nom: "Améliorer le vocabulaire", court: "Vocabulaire", ico: 0xE70F
         , consigne: "Corrige toutes les fautes et améliore le vocabulaire : mots plus précis et plus élégants, moins de répétitions, phrases plus fluides. Garde le même sens, le même ton et une longueur proche."},
     "-",
-    {id: "pro", nom: "Ton professionnel"
+    {id: "pro", nom: "Ton professionnel", court: "Pro", ico: 0xE821
         , consigne: "Réécris sur un ton professionnel, clair et soigné, adapté à un échange d'affaires avec un client, un partenaire, une banque ou une administration. Corrige aussi les fautes."},
-    {id: "decontracte", nom: "Ton décontracté"
+    {id: "decontracte", nom: "Ton décontracté", court: "Décontracté", ico: 0xE76E
         , consigne: "Réécris sur un ton décontracté et naturel, comme entre collègues ou amis, sans tomber dans le familier excessif. Corrige aussi les fautes."},
-    {id: "poli", nom: "Ton poli et courtois"
+    {id: "poli", nom: "Ton poli et courtois", court: "Poli", ico: 0xEB51
         , consigne: "Réécris sur un ton poli, courtois et respectueux, avec des formules de politesse adaptées. Corrige aussi les fautes."},
-    {id: "ferme", nom: "Ton ferme"
+    {id: "ferme", nom: "Ton ferme", court: "Ferme", ico: 0xE945
         , consigne: "Réécris sur un ton ferme, direct et sans ambiguïté, mais toujours correct et professionnel (relance, réclamation, mise au point). Corrige aussi les fautes."},
-    {id: "social", nom: "Réseaux sociaux"
+    {id: "social", nom: "Réseaux sociaux", court: "Réseaux", ico: 0xE72D
         , consigne: "Réécris pour une publication sur les réseaux sociaux : accrocheur, phrases courtes, quelques emojis pertinents et 2 à 4 hashtags à la fin. Corrige aussi les fautes."},
     "-",
-    {id: "court", nom: "Raccourcir"
+    {id: "court", nom: "Raccourcir", court: "Raccourcir", ico: 0xE8C6
         , consigne: "Rends le texte nettement plus court et plus direct, en gardant toutes les informations importantes. Corrige aussi les fautes."},
-    {id: "anglais", nom: "Traduire en anglais"
+    {id: "anglais", nom: "Traduire en anglais", court: "Anglais", ico: 0xE774
         , consigne: "Traduis le texte en anglais naturel et correct, en gardant le même ton."},
-    {id: "francais", nom: "Traduire en français"
+    {id: "francais", nom: "Traduire en français", court: "Français", ico: 0xE774
         , consigne: "Traduis le texte en français naturel et correct, en gardant le même ton."}
 ]
 
@@ -107,6 +108,11 @@ ConstruireMenuPlume()
 EnregistrerRaccourcis()
 OnMessage(0x200, SurvolSouris)    ; WM_MOUSEMOVE : effets de survol
 OnMessage(0x20, CurseurMain)      ; WM_SETCURSOR : main sur les éléments cliquables
+OnMessage(0x200, RoueSouris)      ; roue : survol
+OnMessage(0x202, RoueClic)        ; roue : clic gauche
+OnMessage(0x205, RoueClic)        ; roue : clic droit (annuler)
+OnMessage(0x100, RoueTouche)      ; roue : clavier
+OnMessage(0x6, RoueActivation)    ; roue : fermeture si on clique ailleurs
 
 if AucuneCle()
     PremierLancement()
@@ -153,6 +159,8 @@ CreerIniSiAbsent() {
         . "Apercu=1`n"
         . "`; 1 = si un moteur est saturé, essayer automatiquement les autres moteurs qui ont une clé`n"
         . "Secours=1`n"
+        . "`; 1 = menu en roue autour de la souris, 0 = menu en liste`n"
+        . "Roue=1`n"
     FileAppend(contenu, FICHIER_INI, "UTF-16")
 }
 
@@ -176,6 +184,7 @@ ChargerConfig() {
     Cfg["hk_correction"] := Lire("Raccourcis", "Correction", "^!c")
     Cfg["apercu"] := Lire("Options", "Apercu", "1")
     Cfg["secours"] := Lire("Options", "Secours", "1")
+    Cfg["roue"] := Lire("Options", "Roue", "1")
 
     ; Valeurs de repli si une ligne est vide ou fausse
     for cle, defaut in Map("modele_groq", "openai/gpt-oss-120b", "modele_mistral", "mistral-small-latest"
@@ -270,6 +279,10 @@ RaccourciMenu(*) {
     if (texte = "")
         return
     gTexte := texte
+    if (Cfg["roue"] = "1") {
+        RoueOuvrir()
+        return
+    }
     if CaretGetPos(&cx, &cy)
         MenuPlume.Show(cx, cy + 22)
     else
@@ -973,11 +986,11 @@ class FenetreParametres {
                 this.RendreTouches("hk_menu")
                 this.RendreTouches("hk_correction")
             case 3:
-                for cle in ["apercu", "secours", "demarrage"]
+                for cle in ["apercu", "secours", "demarrage", "roue"]
                     this.PeindreOption(cle)
             case 4:
                 this.aide.Value := "1.   Sélectionne un texte n'importe où (mail, WhatsApp, Word...)`n`n"
-                    . "2.   " NomRaccourci(Cfg["hk_menu"]) "   ouvre le menu des actions`n`n"
+                    . "2.   " NomRaccourci(Cfg["hk_menu"]) "   ouvre la roue des actions (clic ou touche 1 à 0)`n`n"
                     . "3.   " NomRaccourci(Cfg["hk_correction"]) "   corrige directement, sans menu"
         }
         this.MajPied()
@@ -1242,6 +1255,7 @@ class FenetreParametres {
         this.LigneOption("apercu", "Aperçu avant de remplacer", "Montre le résultat dans une fenêtre avant de l'insérer.", 112)
         this.LigneOption("secours", "Secours automatique", "Si un moteur est saturé, Plume passe tout seul à un autre.", 196)
         this.LigneOption("demarrage", "Lancer au démarrage de Windows", "Plume est prêt dès que tu allumes ton ordinateur.", 280)
+        this.LigneOption("roue", "Menu en roue", "Affiche les actions en cercle autour de la souris (sinon en liste).", 364)
     }
 
     LigneOption(cle, titre, desc, y) {
@@ -1268,6 +1282,7 @@ class FenetreParametres {
             case "apercu": return (Cfg["apercu"] = "1")
             case "secours": return (Cfg["secours"] = "1")
             case "demarrage": return (FileExist(LIEN_DEMARRAGE) != "")
+            case "roue": return (Cfg["roue"] = "1")
         }
         return false
     }
@@ -1287,6 +1302,7 @@ class FenetreParametres {
         switch cle {
             case "apercu": IniWrite(actif ? "1" : "0", FICHIER_INI, "Options", "Apercu")
             case "secours": IniWrite(actif ? "1" : "0", FICHIER_INI, "Options", "Secours")
+            case "roue": IniWrite(actif ? "1" : "0", FICHIER_INI, "Options", "Roue")
             case "demarrage":
                 if actif
                     CreerLienDemarrage()
@@ -1409,6 +1425,10 @@ VerifierSortie() {
 
 ; Curseur « main » sur les éléments cliquables
 CurseurMain(wParam, lParam, msg, hwnd) {
+    if (IsObject(gRoue) && wParam = gRoue.hwnd && gRoue.survol) {
+        DllCall("SetCursor", "ptr", DllCall("LoadCursor", "ptr", 0, "ptr", 32649, "ptr"))
+        return true
+    }
     if gCliquables.Has(wParam) {
         DllCall("SetCursor", "ptr", DllCall("LoadCursor", "ptr", 0, "ptr", 32649, "ptr"))
         return true
@@ -1433,6 +1453,285 @@ AfficherAide(*) {
         . "« Autre version » = nouvelle proposition.`n`n"
         . "Moteur principal : " NomMoteur(Cfg["fournisseur"]) " (" Cfg["modele_" Cfg["fournisseur"]] ")"
         , APP " " VERSION, "Iconi")
+}
+
+; ===========================================================================
+;  Roue de sélection (dessinée avec GDI+ dans une fenêtre transparente)
+; ===========================================================================
+RoueOuvrir() {
+    global gRoue
+    GdipDemarrer()
+    RoueFermer()
+    k := A_ScreenDPI / 96
+    W := Round(470 * k)
+
+    items := []
+    n := 0
+    for a in ACTIONS {
+        if !IsObject(a)
+            continue
+        n++
+        items.Push({action: a, touche: String(Mod(n, 10)), court: a.court, nom: a.nom, ico: a.ico})
+    }
+    items.Push({action: 0, touche: "L", court: "Libre", nom: "Consigne libre", ico: 0xE765})
+
+    ; Centrée sur la souris, sans dépasser de l'écran
+    CoordMode("Mouse", "Screen")
+    MouseGetPos(&mx, &my)
+    gauche := 0, haut := 0, droite := A_ScreenWidth, bas := A_ScreenHeight
+    loop MonitorGetCount() {
+        MonitorGet(A_Index, &ml, &mt, &mr, &mb)
+        if (mx >= ml && mx < mr && my >= mt && my < mb) {
+            MonitorGetWorkArea(A_Index, &gauche, &haut, &droite, &bas)
+            break
+        }
+    }
+    x := Min(Max(mx - W // 2, gauche), droite - W)
+    y := Min(Max(my - W // 2, haut), bas - W)
+
+    ; Surface de dessin 32 bits avec transparence
+    hdc := DllCall("CreateCompatibleDC", "ptr", 0, "ptr")
+    bi := Buffer(40, 0)
+    NumPut("uint", 40, "int", W, "int", -W, "ushort", 1, "ushort", 32, bi)
+    bits := 0
+    hbm := DllCall("CreateDIBSection", "ptr", hdc, "ptr", bi, "uint", 0, "ptr*", &bits, "ptr", 0, "uint", 0, "ptr")
+    obm := DllCall("SelectObject", "ptr", hdc, "ptr", hbm, "ptr")
+    gr := 0
+    DllCall("gdiplus\GdipCreateFromHDC", "ptr", hdc, "ptr*", &gr)
+    DllCall("gdiplus\GdipSetSmoothingMode", "ptr", gr, "int", 4)        ; anticrénelage
+    DllCall("gdiplus\GdipSetTextRenderingHint", "ptr", gr, "int", 4)
+
+    g := Gui("-Caption +AlwaysOnTop +ToolWindow -DPIScale +E0x80000")   ; WS_EX_LAYERED
+    gRoue := {g: g, hwnd: g.Hwnd, W: W, k: k, items: items, survol: 0
+        , hdc: hdc, hbm: hbm, obm: obm, gr: gr}
+    RoueDessiner(false)
+    g.Show(Format("x{} y{} w{} h{}", x, y, W, W))
+    for alpha in [60, 130, 200, 255] {          ; petite apparition en fondu
+        RoueAppliquer(alpha)
+        Sleep(12)
+    }
+    WinActivate("ahk_id " g.Hwnd)
+}
+
+RoueDessiner(appliquer := true) {
+    R := gRoue
+    gr := R.gr, k := R.k, c := R.W / 2
+    n := R.items.Length
+    seg := 360 / n
+    rExt := 200 * k, rInt := 92 * k, rCentre := 82 * k
+    DllCall("gdiplus\GdipGraphicsClear", "ptr", gr, "uint", 0)
+
+    loop 6                                           ; ombre douce
+        Disque(gr, c, c, rExt + 6 * k + A_Index * 2.5 * k, 0x0A000000)
+    Disque(gr, c, c, rExt + 6 * k, CouleurA(TH.barre, 240))
+
+    loop n {                                         ; secteurs
+        actif := (A_Index = R.survol)
+        a := -90 - seg / 2 + (A_Index - 1) * seg + 0.9
+        Secteur(gr, c, c, rInt, actif ? rExt + 6 * k : rExt, a, seg - 1.8
+            , actif ? CouleurA(TH.accent) : CouleurA(TH.carte, 250))
+    }
+
+    loop n {                                         ; icônes et libellés
+        it := R.items[A_Index]
+        actif := (A_Index = R.survol)
+        th := (-90 + (A_Index - 1) * seg) * 0.017453292519943
+        bx := c + 146 * k * Cos(th), by := c + 146 * k * Sin(th)      ; icône au-dessus, libellé dessous
+        Ecrire(gr, Chr(it.ico), "Segoe MDL2 Assets", 20 * k, 0, actif ? 0xFFFFFFFF : CouleurA(TH.accentClair)
+            , bx - 18 * k, by - 27 * k, 36 * k, 30 * k)
+        Ecrire(gr, it.court, "Segoe UI", 12 * k, actif ? 1 : 0, actif ? 0xFFFFFFFF : CouleurA(TH.texte, 225)
+            , bx - 48 * k, by + 2 * k, 96 * k, 22 * k, 0x1000)
+    }
+
+    Disque(gr, c, c, rCentre, CouleurA(TH.fond))       ; centre
+    Cercle(gr, c, c, rCentre, CouleurA(TH.accent, 150), 2 * k)
+    if R.survol {
+        it := R.items[R.survol]
+        Ecrire(gr, it.nom, "Segoe UI", 15 * k, 1, 0xFFFFFFFF, c - 70 * k, c - 36 * k, 140 * k, 48 * k)
+        Ecrire(gr, "Touche " it.touche, "Segoe UI", 11 * k, 0, CouleurA(TH.accentClair), c - 70 * k, c + 16 * k, 140 * k, 20 * k)
+    } else {
+        Ecrire(gr, "Plume", "Segoe UI", 17 * k, 1, 0xFFFFFFFF, c - 70 * k, c - 52 * k, 140 * k, 26 * k)
+        Ecrire(gr, "« " Extrait(gTexte, 44) " »", "Segoe UI", 10.5 * k, 2, CouleurA(TH.gris), c - 64 * k, c - 24 * k, 128 * k, 44 * k)
+        Ecrire(gr, "1 à 0  ·  L  ·  Échap", "Segoe UI", 9.5 * k, 0, CouleurA(TH.grisFonce), c - 70 * k, c + 28 * k, 140 * k, 18 * k)
+    }
+    if appliquer
+        RoueAppliquer(255)
+}
+
+RoueAppliquer(alpha := 255) {
+    if !IsObject(gRoue)
+        return
+    taille := Buffer(8)
+    NumPut("int", gRoue.W, "int", gRoue.W, taille)
+    source := Buffer(8, 0)
+    melange := (alpha << 16) | (1 << 24)            ; AC_SRC_OVER + AC_SRC_ALPHA
+    DllCall("UpdateLayeredWindow", "ptr", gRoue.hwnd, "ptr", 0, "ptr", 0, "ptr", taille
+        , "ptr", gRoue.hdc, "ptr", source, "uint", 0, "uint*", &melange, "uint", 2)
+}
+
+; Numéro du secteur sous la souris (0 = centre ou dehors)
+RoueIndex(x, y) {
+    k := gRoue.k, c := gRoue.W / 2
+    dx := x - c, dy := y - c
+    d := Sqrt(dx * dx + dy * dy)
+    if (d < 92 * k || d > 214 * k)
+        return 0
+    seg := 360 / gRoue.items.Length
+    return Floor(Mod(Angle(dx, dy) + 90 + seg / 2, 360) / seg) + 1
+}
+
+Angle(dx, dy) {                 ; 0° à droite, sens des aiguilles d'une montre
+    if (dx = 0)
+        return (dy >= 0) ? 90 : 270
+    a := ATan(dy / dx) * 57.29577951308232
+    if (dx < 0)
+        a += 180
+    else if (dy < 0)
+        a += 360
+    return a
+}
+
+RoueSouris(wParam, lParam, msg, hwnd) {
+    if (!IsObject(gRoue) || hwnd != gRoue.hwnd)
+        return
+    i := RoueIndex(lParam << 48 >> 48, lParam << 32 >> 48)
+    if (i != gRoue.survol) {
+        gRoue.survol := i
+        RoueDessiner()
+    }
+}
+
+RoueClic(wParam, lParam, msg, hwnd) {
+    if (!IsObject(gRoue) || hwnd != gRoue.hwnd)
+        return
+    i := (msg = 0x202) ? RoueIndex(lParam << 48 >> 48, lParam << 32 >> 48) : 0
+    if i
+        RoueChoisir(i)
+    else
+        RoueFermer(true)                            ; centre, dehors ou clic droit : annuler
+    return 0
+}
+
+RoueTouche(wParam, lParam, msg, hwnd) {
+    if (!IsObject(gRoue) || hwnd != gRoue.hwnd)
+        return
+    n := gRoue.items.Length
+    vk := wParam
+    if (vk = 0x1B) {                                 ; Échap
+        RoueFermer(true)
+    } else if ((vk >= 0x30 && vk <= 0x39) || (vk >= 0x60 && vk <= 0x69)) {
+        chiffre := (vk >= 0x60) ? vk - 0x60 : vk - 0x30
+        i := (chiffre = 0) ? 10 : chiffre
+        if (i < n)
+            RoueChoisir(i)
+    } else if (vk = 0x4C) {                          ; L : consigne libre
+        RoueChoisir(n)
+    } else if (vk = 0x0D) {                          ; Entrée
+        if gRoue.survol
+            RoueChoisir(gRoue.survol)
+    } else if (vk = 0x25 || vk = 0x26 || vk = 0x27 || vk = 0x28) {   ; flèches
+        sens := (vk = 0x27 || vk = 0x28) ? 1 : -1
+        gRoue.survol := Mod(gRoue.survol - 1 + sens + n, n) + 1
+        if (gRoue.survol < 1)
+            gRoue.survol := 1
+        RoueDessiner()
+    }
+    return 0
+}
+
+RoueActivation(wParam, lParam, msg, hwnd) {
+    if (IsObject(gRoue) && hwnd = gRoue.hwnd && (wParam & 0xFFFF) = 0)
+        SetTimer(() => RoueFermer(), -1)            ; clic ailleurs : on ferme
+}
+
+RoueChoisir(i) {
+    it := gRoue.items[i]
+    RoueFermer()
+    if IsObject(it.action)
+        SetTimer(() => LancerAction(it.action.id, it.action.nom, it.action.consigne), -10)
+    else
+        SetTimer(() => ConsigneLibre(), -10)
+}
+
+RoueFermer(rendreFocus := false) {
+    global gRoue
+    if !IsObject(gRoue)
+        return
+    R := gRoue
+    gRoue := 0
+    DllCall("gdiplus\GdipDeleteGraphics", "ptr", R.gr)
+    DllCall("SelectObject", "ptr", R.hdc, "ptr", R.obm)
+    DllCall("DeleteObject", "ptr", R.hbm)
+    DllCall("DeleteDC", "ptr", R.hdc)
+    R.g.Destroy()
+    if (rendreFocus && gFenetre && WinExist("ahk_id " gFenetre))
+        WinActivate("ahk_id " gFenetre)
+}
+
+Extrait(t, n) {
+    t := Trim(RegExReplace(t, "\s+", " "))
+    return (StrLen(t) > n) ? SubStr(t, 1, n) "…" : t
+}
+
+; ----- Petites fonctions GDI+ -------------------------------------------------
+GdipDemarrer() {
+    static jeton := 0
+    if jeton
+        return
+    DllCall("LoadLibrary", "str", "gdiplus", "ptr")
+    entree := Buffer(A_PtrSize = 8 ? 24 : 16, 0)
+    NumPut("uint", 1, entree)
+    DllCall("gdiplus\GdiplusStartup", "ptr*", &jeton, "ptr", entree, "ptr", 0)
+}
+
+CouleurA(hex, a := 255) {
+    return (a << 24) | Integer("0x" hex)
+}
+
+Disque(gr, x, y, r, argb) {
+    b := 0
+    DllCall("gdiplus\GdipCreateSolidFill", "uint", argb, "ptr*", &b)
+    DllCall("gdiplus\GdipFillEllipse", "ptr", gr, "ptr", b, "float", x - r, "float", y - r, "float", 2 * r, "float", 2 * r)
+    DllCall("gdiplus\GdipDeleteBrush", "ptr", b)
+}
+
+Cercle(gr, x, y, r, argb, epaisseur) {
+    p := 0
+    DllCall("gdiplus\GdipCreatePen1", "uint", argb, "float", epaisseur, "int", 2, "ptr*", &p)
+    DllCall("gdiplus\GdipDrawEllipse", "ptr", gr, "ptr", p, "float", x - r, "float", y - r, "float", 2 * r, "float", 2 * r)
+    DllCall("gdiplus\GdipDeletePen", "ptr", p)
+}
+
+; Morceau d'anneau entre les rayons r1 et r2, à partir de l'angle a
+Secteur(gr, cx, cy, r1, r2, a, balayage, argb) {
+    b := 0, ch := 0
+    DllCall("gdiplus\GdipCreateSolidFill", "uint", argb, "ptr*", &b)
+    DllCall("gdiplus\GdipCreatePath", "int", 0, "ptr*", &ch)
+    DllCall("gdiplus\GdipAddPathArc", "ptr", ch, "float", cx - r2, "float", cy - r2, "float", 2 * r2, "float", 2 * r2, "float", a, "float", balayage)
+    DllCall("gdiplus\GdipAddPathArc", "ptr", ch, "float", cx - r1, "float", cy - r1, "float", 2 * r1, "float", 2 * r1, "float", a + balayage, "float", -balayage)
+    DllCall("gdiplus\GdipClosePathFigure", "ptr", ch)
+    DllCall("gdiplus\GdipFillPath", "ptr", gr, "ptr", b, "ptr", ch)
+    DllCall("gdiplus\GdipDeletePath", "ptr", ch)
+    DllCall("gdiplus\GdipDeleteBrush", "ptr", b)
+}
+
+; Texte centré dans un rectangle (style : 0 normal, 1 gras, 2 italique)
+Ecrire(gr, txt, police, taille, style, argb, x, y, w, h, drapeaux := 0x2000) {
+    fam := 0, fnt := 0, fmt := 0, b := 0
+    if DllCall("gdiplus\GdipCreateFontFamilyFromName", "wstr", police, "ptr", 0, "ptr*", &fam)
+        DllCall("gdiplus\GdipCreateFontFamilyFromName", "wstr", "Segoe UI", "ptr", 0, "ptr*", &fam)
+    DllCall("gdiplus\GdipCreateFont", "ptr", fam, "float", taille, "int", style, "int", 2, "ptr*", &fnt)
+    DllCall("gdiplus\GdipCreateStringFormat", "int", drapeaux, "int", 0, "ptr*", &fmt)
+    DllCall("gdiplus\GdipSetStringFormatAlign", "ptr", fmt, "int", 1)
+    DllCall("gdiplus\GdipSetStringFormatLineAlign", "ptr", fmt, "int", 1)
+    DllCall("gdiplus\GdipCreateSolidFill", "uint", argb, "ptr*", &b)
+    rc := Buffer(16)
+    NumPut("float", x, "float", y, "float", w, "float", h, rc)
+    DllCall("gdiplus\GdipDrawString", "ptr", gr, "wstr", txt, "int", -1, "ptr", fnt, "ptr", rc, "ptr", fmt, "ptr", b)
+    DllCall("gdiplus\GdipDeleteBrush", "ptr", b)
+    DllCall("gdiplus\GdipDeleteStringFormat", "ptr", fmt)
+    DllCall("gdiplus\GdipDeleteFont", "ptr", fnt)
+    DllCall("gdiplus\GdipDeleteFontFamily", "ptr", fam)
 }
 
 ; ===========================================================================
