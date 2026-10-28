@@ -1,0 +1,116 @@
+﻿PLUME - ton assistant d'écriture personnel pour Windows
+========================================================
+
+Sélectionne un texte n'importe où sur ton PC (Outlook, Gmail, WhatsApp,
+Word, Excel, navigateur...), puis :
+
+   Ctrl + Alt + Espace   ->  roue : corriger, améliorer, changer le ton, traduire
+   Ctrl + Alt + C        ->  correction instantanée (orthographe et grammaire)
+
+Le texte est remplacé directement à sa place, comme avec Galaxy AI.
+
+
+INSTALLATION (une seule fois, environ 5 minutes)
+------------------------------------------------
+
+1. Installer AutoHotkey v2 (gratuit, c'est le moteur qui fait tourner Plume)
+   Va sur https://www.autohotkey.com, clique sur « Download » puis sur
+   « Download v2.0 ». Lance l'installateur et clique sur « Install ».
+
+2. Ranger le dossier Plume
+   Décompresse ce dossier dans « Documents » (par exemple Documents\Plume).
+   Évite « Program Files » : Plume doit pouvoir y enregistrer ses réglages.
+
+3. Créer une clé API (une seule suffit pour commencer)
+
+   - Groq - GRATUIT, très rapide (recommandé)
+     Va sur https://console.groq.com/keys, connecte-toi (compte Google
+     possible), clique sur « Create API Key » et copie la clé.
+     Groq n'utilise pas tes textes pour entraîner ses modèles.
+
+   - Mistral - GRATUIT, excellent en français
+     https://console.mistral.ai : active l'offre gratuite « Experiment »
+     (un numéro de téléphone est demandé), puis « API keys ».
+     Avec l'offre gratuite, tes textes peuvent servir à entraîner Mistral.
+
+   - Gemini (Google) - GRATUIT, mais souvent saturé
+     https://aistudio.google.com/apikey > « Create API key ».
+     Avec l'offre gratuite, Google peut utiliser tes textes.
+
+   - Claude (Anthropic) - PAYANT, le plus fiable et confidentiel
+     https://platform.claude.com > « API keys ». Facturé à part de
+     l'abonnement Claude (crédits inclus avec les formules Max).
+
+   Astuce : mets DEUX clés (par exemple Groq + Mistral). Si un moteur
+   est saturé, Plume passe tout seul sur l'autre.
+
+4. Lancer Plume
+   Double-clique sur Plume.ahk. La fenêtre « Paramètres » s'ouvre :
+   choisis ton moteur, colle ta clé, clique sur « Tester le moteur »,
+   puis « Enregistrer ».
+   Coche « Lancer Plume au démarrage de Windows » pour l'avoir toujours.
+
+
+UTILISATION
+-----------
+
+Ctrl + Alt + Espace ouvre la ROUE des actions autour de ta souris.
+Clique sur un secteur, tape son numéro, ou utilise les flèches + Entrée :
+
+   1  Corriger les fautes
+   2  Améliorer le vocabulaire
+   3  Ton professionnel
+   4  Ton décontracté
+   5  Ton poli et courtois
+   6  Ton ferme (relance, réclamation)
+   7  Réseaux sociaux (emojis et hashtags)
+   8  Raccourcir
+   9  Traduire en anglais
+   0  Traduire en français
+   L  Consigne libre (tu écris toi-même ce que tu veux)
+
+Une fenêtre montre le résultat :
+   Entrée = remplacer     Échap = annuler
+   « Copier » = garder le résultat dans le presse-papiers
+   « Autre version » = nouvelle proposition
+
+Ctrl + Alt + C corrige directement, sans menu ni fenêtre.
+Si le texte n'a aucune faute, Plume te l'indique et ne touche à rien.
+
+
+RÉGLAGES
+--------
+
+Clic droit sur l'icône Plume (en bas à droite, près de l'horloge,
+parfois cachée derrière la petite flèche ^) > Paramètres.
+Tout s'enregistre automatiquement, il n'y a pas de bouton à valider.
+
+   Moteurs d'IA : clique sur une carte pour en faire le moteur principal,
+                  colle tes clés, puis « Tester le moteur principal ».
+   Raccourcis   : « Modifier », puis appuie sur la nouvelle combinaison.
+   Options      : aperçu, secours automatique, démarrage avec Windows,
+                  menu en roue ou en liste.
+   À propos     : aide et accès au dossier de Plume.
+
+Ta clé API est enregistrée dans plume.ini : ne partage pas ce fichier.
+
+
+EN CAS DE SOUCI
+---------------
+
+- Rien ne se passe : vérifie que l'icône Plume est bien près de l'horloge.
+- « Clé invalide » : recolle la clé dans Paramètres et clique « Tester le moteur ».
+- « Saturé » / « high demand » : le service gratuit est surchargé. Ajoute la
+  clé d'un deuxième moteur : Plume basculera automatiquement.
+- Ne marche pas dans un logiciel lancé « en tant qu'administrateur » :
+  lance aussi Plume.ahk en tant qu'administrateur.
+- Un autre logiciel utilise déjà le même raccourci : change-le dans
+  Paramètres > Raccourcis.
+
+
+MISE À JOUR DEPUIS UNE ANCIENNE VERSION
+---------------------------------------
+
+Remplace seulement le fichier Plume.ahk (et plume.ico) dans ton dossier.
+Garde ton plume.ini : tes réglages et ta clé Gemini sont conservés.
+Puis clic droit sur l'icône Plume > Recharger.
