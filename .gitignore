@@ -1,0 +1,7 @@
+# Réglages personnels et clés API : jamais publiés
+plume.ini
+*.ini
+
+# Fichiers temporaires et compilés
+*.exe
+*.tmp
