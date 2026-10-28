@@ -1436,12 +1436,12 @@ CurseurMain(wParam, lParam, msg, hwnd) {
 }
 
 CreerLienDemarrage() {
-    icone := FileExist(ICONE) ? ICONE : ""
+    fichierIcone := FileExist(ICONE) ? ICONE : ""
     try FileDelete(LIEN_DEMARRAGE)
     if A_IsCompiled
-        FileCreateShortcut(A_ScriptFullPath, LIEN_DEMARRAGE, A_ScriptDir, "/silencieux", "Plume - assistant d'écriture", icone)
+        FileCreateShortcut(A_ScriptFullPath, LIEN_DEMARRAGE, A_ScriptDir, "/silencieux", "Plume - assistant d'écriture", fichierIcone)
     else
-        FileCreateShortcut(A_AhkPath, LIEN_DEMARRAGE, A_ScriptDir, Chr(34) A_ScriptFullPath Chr(34) " /silencieux", "Plume - assistant d'écriture", icone)
+        FileCreateShortcut(A_AhkPath, LIEN_DEMARRAGE, A_ScriptDir, Chr(34) A_ScriptFullPath Chr(34) " /silencieux", "Plume - assistant d'écriture", fichierIcone)
 }
 
 AfficherAide(*) {
@@ -1535,8 +1535,8 @@ RoueDessiner(appliquer := true) {
     loop n {                                         ; icônes et libellés
         it := R.items[A_Index]
         actif := (A_Index = R.survol)
-        th := (-90 + (A_Index - 1) * seg) * 0.017453292519943
-        bx := c + 146 * k * Cos(th), by := c + 146 * k * Sin(th)      ; icône au-dessus, libellé dessous
+        teta := (-90 + (A_Index - 1) * seg) * 0.017453292519943
+        bx := c + 146 * k * Cos(teta), by := c + 146 * k * Sin(teta)      ; icône au-dessus, libellé dessous
         Ecrire(gr, Chr(it.ico), "Segoe MDL2 Assets", 20 * k, 0, actif ? 0xFFFFFFFF : CouleurA(TH.accentClair)
             , bx - 18 * k, by - 27 * k, 36 * k, 30 * k)
         Ecrire(gr, it.court, "Segoe UI", 12 * k, actif ? 1 : 0, actif ? 0xFFFFFFFF : CouleurA(TH.texte, 225)
