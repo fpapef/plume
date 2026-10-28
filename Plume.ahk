@@ -13,7 +13,7 @@ Persistent
 ; =============================================================================
 
 global APP := "Plume"
-global VERSION := "1.1"
+global VERSION := "1.2"
 global MOTEURS := ["groq", "mistral", "gemini", "claude"]   ; ordre d'essai en secours
 global FICHIER_INI := A_ScriptDir "\plume.ini"
 global DOSSIER_TMP := A_Temp "\Plume"
@@ -29,6 +29,24 @@ global gConsigneLibre := ""    ; dernière consigne libre tapée
 global gApercu := ""           ; fenêtre d'aperçu ouverte
 global gParam := ""            ; fenêtre des paramètres ouverte
 global gMoteurUtilise := ""    ; moteur qui a réellement répondu
+global gSurvols := Map()       ; contrôles avec effet de survol : hwnd -> {entrer, sortir}
+global gCliquables := Map()    ; contrôles cliquables : hwnd -> true (curseur main)
+global gSurvolEntree := 0      ; élément actuellement survolé
+
+; Couleurs de l'interface (thème sombre, assorti à l'icône)
+global TH := {fond: "0F1226", barre: "0B0E1F", navSel: "1E2450", navSurvol: "161B38"
+    , carte: "171C3A", carteSel: "1D2350", bord: "262D58", champ: "0D1023", champBord: "323A6E"
+    , texte: "EEF0FF", gris: "98A0C4", grisFonce: "6B7399"
+    , accent: "6366F1", accentSurvol: "7A7DF7", accentClair: "A5B4FC"
+    , dore: "FBBF24", doreFond: "3A2E0E", vert: "34D399", vertFond: "0F3A2D", rouge: "F87171"
+    , bouton2: "262D58", bouton2Survol: "323A72", piste: "3A4170"}
+
+global INFOS_MOTEURS := Map(
+    "groq", {nom: "Groq", prix: "GRATUIT", desc: "Très rapide  ·  textes non utilisés", lien: "https://console.groq.com/keys"},
+    "mistral", {nom: "Mistral", prix: "GRATUIT", desc: "Excellent en français", lien: "https://console.mistral.ai/api-keys"},
+    "gemini", {nom: "Gemini", prix: "GRATUIT", desc: "Google  ·  parfois saturé", lien: "https://aistudio.google.com/apikey"},
+    "claude", {nom: "Claude", prix: "PAYANT", desc: "Le plus fiable et confidentiel", lien: "https://platform.claude.com/settings/keys"}
+)
 global MenuPlume := ""
 
 ; ---------------------------------------------------------------------------
@@ -87,6 +105,8 @@ if FileExist(ICONE)
 ConstruireMenuSysteme()
 ConstruireMenuPlume()
 EnregistrerRaccourcis()
+OnMessage(0x200, SurvolSouris)    ; WM_MOUSEMOVE : effets de survol
+OnMessage(0x20, CurseurMain)      ; WM_SETCURSOR : main sur les éléments cliquables
 
 if AucuneCle()
     PremierLancement()
@@ -775,89 +795,623 @@ PremierLancement() {
 
 OuvrirParametres(*) {
     global gParam
-    try gParam.Destroy()
-    g := Gui("+AlwaysOnTop", APP " - Paramètres")
-    gParam := g
-    g.MarginX := 18, g.MarginY := 14
-    g.SetFont("s16 bold", "Segoe UI")
-    g.AddText("w480", "Plume")
-    g.SetFont("s10 norm", "Segoe UI")
-    g.AddText("w480 y+0 c666666", "Ton assistant d'écriture personnel  -  version " VERSION)
-
-    g.AddText("w480 y+18", "Moteur d'intelligence artificielle principal :")
-    libelles := ["Groq  -  gratuit et très rapide (recommandé)"
-        , "Mistral  -  gratuit, excellent en français"
-        , "Google Gemini  -  gratuit, parfois saturé"
-        , "Claude (Anthropic)  -  payant, le plus fiable"]
-    choix := 1
-    for i, m in MOTEURS
-        if (m = Cfg["fournisseur"])
-            choix := i
-    g.AddDropDownList("w480 AltSubmit vMoteur Choose" choix, libelles)
-
-    g.AddText("xm w480 y+18", "Clés API  (une seule suffit, plusieurs = secours automatique) :")
-    LigneCle("Groq", "CleGroq", Cfg["cle_groq"], "https://console.groq.com/keys")
-    LigneCle("Mistral", "CleMistral", Cfg["cle_mistral"], "https://console.mistral.ai/api-keys")
-    LigneCle("Gemini", "CleGemini", Cfg["cle_gemini"], "https://aistudio.google.com/apikey")
-    LigneCle("Claude", "CleClaude", Cfg["cle_claude"], "https://platform.claude.com/settings/keys")
-
-    g.AddCheckbox("xm w480 y+18 vSecours Checked" (Cfg["secours"] = "1" ? 1 : 0)
-        , "Si un moteur est saturé, passer automatiquement à un autre")
-    g.AddCheckbox("xm w480 vApercu Checked" (Cfg["apercu"] = "1" ? 1 : 0)
-        , "Afficher un aperçu avant de remplacer (actions du menu)")
-    g.AddCheckbox("xm w480 vDemarrage Checked" (FileExist(LIEN_DEMARRAGE) ? 1 : 0)
-        , "Lancer Plume au démarrage de Windows")
-
-    g.AddText("xm w480 y+16 c666666"
-        , "Menu : " NomRaccourci(Cfg["hk_menu"]) "        Correction instantanée : " NomRaccourci(Cfg["hk_correction"])
-        . "`nPour changer les raccourcis : modifie plume.ini, puis clic droit sur l'icône > Recharger.")
-
-    bOk := g.AddButton("xm w130 h32 y+18 Default", "Enregistrer")
-    bTest := g.AddButton("x+10 w170 h32", "Tester le moteur")
-    bAnnuler := g.AddButton("x+10 w110 h32", "Fermer")
-    bOk.OnEvent("Click", PEnregistrer)
-    bTest.OnEvent("Click", PTester)
-    bAnnuler.OnEvent("Click", (*) => g.Destroy())
-    g.OnEvent("Escape", (*) => g.Destroy())
-    g.Show("AutoSize Center")
-
-    LigneCle(nom, variable, valeur, lien) {
-        g.AddText("xm w70 h26 y+8 Section 0x200", nom " :")
-        g.AddEdit("x+6 ys w300 h26 Password v" variable, valeur)
-        g.AddLink("x+12 ys+4", '<a href="' lien '">Créer une clé</a>')
-    }
-    PSauver(v) {
-        IniWrite(MOTEURS[v.Moteur], FICHIER_INI, "IA", "Fournisseur")
-        IniWrite(Trim(v.CleGroq), FICHIER_INI, "IA", "CleGroq")
-        IniWrite(Trim(v.CleMistral), FICHIER_INI, "IA", "CleMistral")
-        IniWrite(Trim(v.CleGemini), FICHIER_INI, "IA", "CleGemini")
-        IniWrite(Trim(v.CleClaude), FICHIER_INI, "IA", "CleClaude")
-        IniWrite(v.Secours ? "1" : "0", FICHIER_INI, "Options", "Secours")
-        IniWrite(v.Apercu ? "1" : "0", FICHIER_INI, "Options", "Apercu")
-        if v.Demarrage
-            CreerLienDemarrage()
-        else
-            try FileDelete(LIEN_DEMARRAGE)
-        ChargerConfig()
-    }
-    PEnregistrer(*) {
-        PSauver(g.Submit())
-        g.Destroy()
-        Bulle("Paramètres enregistrés.")
-    }
-    PTester(*) {
-        PSauver(g.Submit(false))
-        nom := NomMoteur(Cfg["fournisseur"])
-        ToolTip("Test de " nom " en cours...")
+    if IsObject(gParam) {
         try {
-            ; Test du moteur choisi seul, sans basculer sur un autre
-            r := DemanderIA("Corrige uniquement les fautes.", "Bonjour, je suis tres contant de vous voire demain a la reunion.", false)
-            ToolTip()
-            MsgBox("Ça marche avec " nom " ! Réponse :`n`n" Trim(r, " `t`r`n"), APP, "Iconi Owner" g.Hwnd)
-        } catch as e {
-            ToolTip()
-            MsgBox(e.Message, APP, "Icon! Owner" g.Hwnd)
+            gParam.g.Show()
+            WinActivate("ahk_id " gParam.g.Hwnd)
+            return
         }
+    }
+    gParam := FenetreParametres()
+}
+
+class FenetreParametres {
+    __New() {
+        this.pages := [[], [], [], []]   ; contrôles de chaque onglet
+        this.fonds := []                 ; fonds colorés (placés sous les autres contrôles)
+        this.navs := []
+        this.lignes := Map()
+        this.options := Map()
+        this.touches := Map()
+        this.page := 0
+        this.pc := 0
+        this.capture := ""
+        this.enTest := false
+
+        g := Gui("-MinimizeBox +OwnDialogs", APP " - Paramètres")
+        this.g := g
+        g.BackColor := TH.fond
+        g.MarginX := 0, g.MarginY := 0
+        g.OnEvent("Close", (*) => this.Fermer())
+        g.OnEvent("Escape", (*) => this.Fermer())
+        TitreSombre(g.Hwnd)
+
+        this.ConstruireBarre()
+        this.pc := 1, this.ConstruirePageMoteurs()
+        this.pc := 2, this.ConstruirePageRaccourcis()
+        this.pc := 3, this.ConstruirePageOptions()
+        this.pc := 4, this.ConstruirePageAPropos()
+        this.pc := 0
+
+        AuFond(this.fonds)
+        for p in this.pages
+            for c in p
+                c.Visible := false
+        this.AfficherPage(1)
+        g.Show("w820 h600 Center")
+    }
+
+    ; ----- Outils de construction -------------------------------------------
+    Police(taille, style := "norm", nom := "") {
+        if (nom != "") {
+            this.g.SetFont("s" taille " " style, nom)
+            return
+        }
+        this.g.SetFont("s" taille " " style, "Segoe UI")
+        this.g.SetFont(, "Segoe UI Variable Text")     ; police de Windows 11 si présente
+    }
+
+    ; Crée un texte (ou un fond coloré) et le range dans l'onglet en cours
+    T(opts, texte := "", fond := false, page := -1) {
+        if fond
+            opts .= " +0x4000000"                       ; WS_CLIPSIBLINGS
+        c := this.g.AddText(opts, texte)
+        p := (page = -1) ? this.pc : page
+        if p
+            this.pages[p].Push(c)
+        if fond
+            this.fonds.Push(c)
+        return c
+    }
+
+    Clic(c, fn, double := true) {
+        c.OnEvent("Click", fn)
+        if double
+            c.OnEvent("DoubleClick", fn)
+        gCliquables[c.Hwnd] := true
+    }
+
+    Carte(x, y, w, h, rayon := 12) {
+        ext := this.T(Format("x{} y{} w{} h{} Background{}", x, y, w, h, TH.bord), "", true)
+        dedans := this.T(Format("x{} y{} w{} h{} Background{}", x + 1, y + 1, w - 2, h - 2, TH.carte), "", true)
+        Arrondir(ext, rayon)
+        Arrondir(dedans, rayon - 1)
+        return {ext: ext, dedans: dedans}
+    }
+
+    Bouton(x, y, w, h, texte, primaire, action) {
+        normal := primaire ? TH.accent : TH.bouton2
+        survol := primaire ? TH.accentSurvol : TH.bouton2Survol
+        this.Police(10, "bold")
+        b := this.T(Format("x{} y{} w{} h{} Center 0x200 c{} Background{}", x, y, w, h, primaire ? "FFFFFF" : TH.texte, normal), texte)
+        this.Police(10)
+        Arrondir(b, 10)
+        this.Clic(b, action, false)
+        gSurvols[b.Hwnd] := {entrer: (*) => Peindre(b, survol), sortir: (*) => Peindre(b, normal)}
+        return b
+    }
+
+    EnTete(titre, sousTitre) {
+        this.Police(19, "bold")
+        this.T(Format("x248 y24 w548 h38 c{} Background{}", TH.texte, TH.fond), titre)
+        this.Police(10)
+        this.T(Format("x248 y64 w548 h40 c{} Background{}", TH.gris, TH.fond), sousTitre)
+    }
+
+    ; ----- Barre latérale -----------------------------------------------------
+    ConstruireBarre() {
+        this.T("x0 y0 w220 h600 Background" TH.barre, "", true, 0)
+        if FileExist(ICONE)
+            this.g.AddPicture("x22 y24 w42 h42 Background" TH.barre, ICONE)
+        this.Police(17, "bold")
+        this.T(Format("x76 y22 w130 h30 c{} Background{}", TH.texte, TH.barre), "Plume", false, 0)
+        this.Police(9)
+        this.T(Format("x77 y52 w130 h18 c{} Background{}", TH.gris, TH.barre), "Version " VERSION, false, 0)
+
+        onglets := [[0xE945, "Moteurs d'IA"], [0xE765, "Raccourcis"], [0xE713, "Options"], [0xE946, "À propos"]]
+        for i, o in onglets
+            this.AjouterNav(i, Chr(o[1]), o[2], 104 + (i - 1) * 48)
+
+        this.T(Format("x24 y540 w172 h1 Background{}", TH.bord), "", false, 0)
+        this.Police(9)
+        this.pied := this.T(Format("x24 y552 w180 h24 0x200 c{} Background{}", TH.gris, TH.barre), "", false, 0)
+        this.Police(10)
+    }
+
+    AjouterNav(i, glyphe, libelle, y) {
+        fond := this.T(Format("x14 y{} w192 h42 Background{}", y, TH.barre), "", true, 0)
+        Arrondir(fond, 10)
+        this.Police(12, "norm", "Segoe MDL2 Assets")
+        ico := this.T(Format("x30 y{} w24 h40 0x200 c{} Background{}", y + 1, TH.gris, TH.barre), glyphe, false, 0)
+        this.Police(10)
+        txt := this.T(Format("x62 y{} w128 h40 0x200 c{} Background{}", y + 1, TH.gris, TH.barre), libelle, false, 0)
+        marque := this.T(Format("x5 y{} w4 h22 Background{}", y + 10, TH.accent), "", false, 0)
+        Arrondir(marque, 2)
+        this.navs.Push({fond: fond, ico: ico, txt: txt, marque: marque})
+
+        fn := ObjBindMethod(this, "AfficherPage", i)
+        entree := {entrer: (*) => this.PeindreNav(i, true), sortir: (*) => this.PeindreNav(i, false)}
+        for c in [fond, ico, txt] {
+            this.Clic(c, fn)
+            gSurvols[c.Hwnd] := entree
+        }
+    }
+
+    PeindreNav(i, survol := false) {
+        n := this.navs[i]
+        sel := (i = this.page)
+        bg := sel ? TH.navSel : (survol ? TH.navSurvol : TH.barre)
+        for c in [n.fond, n.ico, n.txt]
+            c.Opt("Background" bg)
+        n.ico.Opt("c" (sel ? TH.accentClair : TH.gris))
+        n.txt.Opt("c" (sel ? TH.texte : TH.gris))
+        n.txt.SetFont(sel ? "bold" : "norm")
+        n.marque.Visible := sel
+        for c in [n.fond, n.ico, n.txt]
+            c.Redraw()
+    }
+
+    AfficherPage(n, *) {
+        if (this.page = n || this.capture != "")
+            return
+        if this.page
+            for c in this.pages[this.page]
+                c.Visible := false
+        this.page := n
+        for c in this.pages[n]
+            c.Visible := true
+        this.Rafraichir()
+        loop this.navs.Length
+            this.PeindreNav(A_Index)
+    }
+
+    Rafraichir() {
+        switch this.page {
+            case 1:
+                this.MettreAJourLignes()
+            case 2:
+                this.RendreTouches("hk_menu")
+                this.RendreTouches("hk_correction")
+            case 3:
+                for cle in ["apercu", "secours", "demarrage"]
+                    this.PeindreOption(cle)
+            case 4:
+                this.aide.Value := "1.   Sélectionne un texte n'importe où (mail, WhatsApp, Word...)`n`n"
+                    . "2.   " NomRaccourci(Cfg["hk_menu"]) "   ouvre le menu des actions`n`n"
+                    . "3.   " NomRaccourci(Cfg["hk_correction"]) "   corrige directement, sans menu"
+        }
+        this.MajPied()
+    }
+
+    MajPied() {
+        m := Cfg["fournisseur"]
+        ok := (Cfg["cle_" m] != "")
+        this.pied.Opt("c" (ok ? TH.vert : TH.dore))
+        this.pied.Value := "Moteur actif : " NomMoteur(m) (ok ? "" : "  (sans clé)")
+    }
+
+    ; ----- Onglet 1 : moteurs d'IA -------------------------------------------
+    ConstruirePageMoteurs() {
+        this.EnTete("Moteurs d'IA", "Choisis ton moteur principal et colle tes clés. Avec plusieurs clés, Plume bascule tout seul si un moteur est saturé.")
+        y := 112
+        for m in MOTEURS {
+            this.LigneMoteur(m, 248, y)
+            y += 92
+        }
+        this.Bouton(248, y + 12, 250, 42, "Tester le moteur principal", true, ObjBindMethod(this, "TesterMoteur"))
+        this.Police(9)
+        this.statut := this.T(Format("x514 y{} w282 h58 c{} Background{}", y + 6, TH.gris, TH.fond), "")
+        this.Police(10)
+    }
+
+    LigneMoteur(m, x, y) {
+        info := INFOS_MOTEURS[m]
+        k := this.Carte(x, y, 548, 82)
+        l := {ext: k.ext, dedans: k.dedans, visible: false}
+
+        this.Police(14, "norm", "Segoe UI Symbol")
+        l.radio := this.T(Format("x{} y{} w28 h32 Center 0x200 c{} Background{}", x + 14, y + 25, TH.gris, TH.carte), "○")
+        this.Police(12, "bold")
+        l.nom := this.T(Format("x{} y{} w78 h26 0x200 c{} Background{}", x + 52, y + 11, TH.texte, TH.carte), info.nom)
+        this.Police(7, "bold")
+        gratuit := (info.prix = "GRATUIT")
+        l.prix := this.T(Format("x{} y{} w62 h18 Center 0x200 c{} Background{}", x + 132, y + 15
+            , gratuit ? TH.vert : TH.dore, gratuit ? TH.vertFond : TH.doreFond), info.prix)
+        l.principal := this.T(Format("x{} y{} w74 h18 Center 0x200 cFFFFFF Background{}", x + 200, y + 15, TH.accent), "PRINCIPAL")
+        Arrondir(l.prix, 9)
+        Arrondir(l.principal, 9)
+        this.Police(9)
+        l.desc := this.T(Format("x{} y{} w240 h18 0x200 c{} Background{}", x + 52, y + 38, TH.gris, TH.carte), info.desc)
+        l.lien := this.T(Format("x{} y{} w130 h18 0x200 c{} Background{}", x + 52, y + 58, TH.accentClair, TH.carte), "Créer une clé  →")
+
+        ; Champ de saisie de la clé
+        l.cadre := this.T(Format("x{} y{} w214 h38 Background{}", x + 300, y + 22, TH.champBord), "", true)
+        l.champ := this.T(Format("x{} y{} w212 h36 Background{}", x + 301, y + 23, TH.champ), "", true)
+        Arrondir(l.cadre, 10)
+        Arrondir(l.champ, 9)
+        this.Police(10)
+        l.ed := this.g.AddEdit(Format("x{} y{} w160 h22 -E0x200 Password c{} Background{}", x + 312, y + 30, TH.texte, TH.champ), Cfg["cle_" m])
+        this.pages[this.pc].Push(l.ed)
+        SendMessage(0x1501, 1, StrPtr("Colle ta clé ici"), l.ed.Hwnd)      ; texte d'invite
+        this.Police(11, "norm", "Segoe MDL2 Assets")
+        l.oeil := this.T(Format("x{} y{} w30 h28 Center 0x200 c{} Background{}", x + 476, y + 27, TH.gris, TH.champ), Chr(0xE890))
+        this.Police(13, "norm", "Segoe UI Symbol")
+        l.ok := this.T(Format("x{} y{} w24 h30 Center 0x200 c{} Background{}", x + 519, y + 26, TH.vert, TH.carte), "✔")
+        this.Police(10)
+
+        principal := ObjBindMethod(this, "DefinirPrincipal", m)
+        for c in [k.dedans, l.radio, l.nom, l.desc]
+            this.Clic(c, principal)
+        this.Clic(l.lien, (*) => Run(info.lien), false)
+        this.Clic(l.oeil, ObjBindMethod(this, "BasculerVisible", m))
+        l.ed.OnEvent("Change", ObjBindMethod(this, "CleModifiee", m))
+        this.lignes[m] := l
+    }
+
+    MettreAJourLignes() {
+        for m, l in this.lignes {
+            sel := (m = Cfg["fournisseur"])
+            fondCarte := sel ? TH.carteSel : TH.carte
+            l.ext.Opt("Background" (sel ? TH.accent : TH.bord))
+            for c in [l.dedans, l.radio, l.nom, l.desc, l.lien, l.ok]
+                c.Opt("Background" fondCarte)
+            l.radio.Value := sel ? "◉" : "○"
+            l.radio.Opt("c" (sel ? TH.accentClair : TH.gris))
+            l.principal.Visible := sel
+            l.ok.Visible := (Cfg["cle_" m] != "")
+            for c in [l.ext, l.dedans, l.radio, l.nom, l.prix, l.principal, l.desc, l.lien, l.cadre, l.champ, l.ed, l.oeil, l.ok]
+                c.Redraw()
+        }
+    }
+
+    DefinirPrincipal(m, *) {
+        IniWrite(m, FICHIER_INI, "IA", "Fournisseur")
+        ChargerConfig()
+        this.MettreAJourLignes()
+        this.MajPied()
+        this.Statut("", TH.gris)
+    }
+
+    CleModifiee(m, *) {
+        l := this.lignes[m]
+        IniWrite(Trim(l.ed.Value), FICHIER_INI, "IA", "Cle" NomMoteur(m))
+        ChargerConfig()
+        l.ok.Visible := (Cfg["cle_" m] != "")
+        this.MajPied()
+    }
+
+    BasculerVisible(m, *) {
+        l := this.lignes[m]
+        l.visible := !l.visible
+        SendMessage(0xCC, l.visible ? 0 : 0x25CF, 0, l.ed.Hwnd)          ; EM_SETPASSWORDCHAR
+        l.ed.Redraw()
+        l.oeil.Opt("c" (l.visible ? TH.accentClair : TH.gris))
+        l.oeil.Redraw()
+    }
+
+    TesterMoteur(*) {
+        if this.enTest
+            return
+        nom := NomMoteur(Cfg["fournisseur"])
+        if (Cfg["cle_" Cfg["fournisseur"]] = "") {
+            this.Statut("Colle d'abord la clé de " nom " dans sa carte.", TH.dore)
+            return
+        }
+        this.enTest := true
+        this.Statut("Test de " nom " en cours...", TH.gris)
+        try {
+            r := DemanderIA("Corrige uniquement les fautes.", "Bonjour, je suis tres contant de vous voire demain.", false)
+            this.Statut(nom " fonctionne !`n« " Abreger(Trim(r, " `t`r`n"), 80) " »", TH.vert)
+        } catch as e {
+            this.Statut(Abreger(e.Message, 150), TH.rouge)
+        }
+        this.enTest := false
+    }
+
+    Statut(texte, couleur) {
+        this.statut.Opt("c" couleur)
+        this.statut.Value := texte
+        this.statut.Redraw()
+    }
+
+    ; ----- Onglet 2 : raccourcis ---------------------------------------------
+    ConstruirePageRaccourcis() {
+        this.EnTete("Raccourcis clavier", "Clique sur « Modifier », puis appuie sur la nouvelle combinaison de touches.")
+        this.LigneRaccourci("hk_menu", "Ouvrir le menu Plume", "Corriger, changer le ton, traduire...", 112)
+        this.LigneRaccourci("hk_correction", "Correction instantanée", "Corrige le texte sélectionné, sans menu", 236)
+        this.Police(9)
+        this.T(Format("x248 y364 w548 h40 c{} Background{}", TH.grisFonce, TH.fond)
+            , "Astuce : garde Ctrl ou Alt dans la combinaison (par exemple Ctrl + Alt + Espace) pour ne pas gêner ta frappe normale.")
+        this.statutTouches := this.T(Format("x248 y410 w548 h24 c{} Background{}", TH.vert, TH.fond), "")
+        this.Police(10)
+    }
+
+    LigneRaccourci(type, titre, desc, y) {
+        x := 248
+        k := this.Carte(x, y, 548, 112)
+        r := {y: y, caps: [], plus: []}
+        this.Police(11, "bold")
+        this.T(Format("x{} y{} w360 h24 0x200 c{} Background{}", x + 22, y + 14, TH.texte, TH.carte), titre)
+        this.Police(9)
+        this.T(Format("x{} y{} w360 h20 0x200 c{} Background{}", x + 22, y + 38, TH.gris, TH.carte), desc)
+        this.Police(10, "bold")
+        loop 5
+            r.caps.Push(this.T(Format("x{} y{} w40 h32 Center 0x200 c{} Background{}", x + 22, y + 66, TH.texte, TH.bouton2), ""))
+        this.Police(10)
+        loop 4
+            r.plus.Push(this.T(Format("x{} y{} w18 h32 Center 0x200 c{} Background{}", x + 22, y + 66, TH.gris, TH.carte), "+"))
+        this.Police(9, "bold")
+        r.indice := this.T(Format("x{} y{} w360 h32 0x200 c{} Background{}", x + 22, y + 66, TH.dore, TH.carte), "")
+        this.Police(10)
+        this.Bouton(x + 418, y + 38, 108, 36, "Modifier", false, ObjBindMethod(this, "Capturer", type))
+        this.touches[type] := r
+    }
+
+    RendreTouches(type) {
+        r := this.touches[type]
+        r.indice.Visible := false
+        noms := StrSplit(NomRaccourci(Cfg[type]), "+")
+        largeurs := []
+        for nom in noms
+            largeurs.Push(26 + 9 * StrLen(nom))
+        x := 248 + 22
+        for i, c in r.caps {
+            if (i > noms.Length) {
+                c.Visible := false
+                continue
+            }
+            c.Value := noms[i]
+            c.Move(x, r.y + 66, largeurs[i], 32)
+            Arrondir(c, 7)
+            c.Visible := true
+            x += largeurs[i]
+            if (i < noms.Length) {
+                r.plus[i].Move(x, r.y + 66, 18, 32)
+                r.plus[i].Visible := true
+                x += 18
+            }
+        }
+        for i, p in r.plus
+            if (i >= noms.Length)
+                p.Visible := false
+    }
+
+    Capturer(type, *) {
+        if (this.capture != "")
+            return
+        this.capture := type
+        r := this.touches[type]
+        for c in r.caps
+            c.Visible := false
+        for p in r.plus
+            p.Visible := false
+        r.indice.Value := "Appuie sur ta combinaison...   (Échap = annuler)"
+        r.indice.Visible := true
+        this.statutTouches.Value := ""
+
+        etaitSuspendu := A_IsSuspended
+        Suspend(true)                    ; les raccourcis actuels ne se déclenchent pas pendant la saisie
+        ih := InputHook("T10")
+        ih.KeyOpt("{All}", "E")
+        ih.KeyOpt("{LCtrl}{RCtrl}{LAlt}{RAlt}{LShift}{RShift}{LWin}{RWin}", "-E")
+        ih.Start()
+        ih.Wait()
+        Suspend(etaitSuspendu)
+        this.capture := ""
+
+        message := "", couleur := TH.vert
+        if (ih.EndReason = "EndKey" && ih.EndKey != "Escape") {
+            mods := ""
+            for s in ["^", "!", "+", "#"]
+                if InStr(ih.EndMods, s)
+                    mods .= s
+            if !(InStr(mods, "^") || InStr(mods, "!") || InStr(mods, "#")) {
+                message := "Ajoute Ctrl, Alt ou la touche Windows dans la combinaison."
+                couleur := TH.dore
+            } else {
+                erreur := this.AppliquerRaccourci(type, mods ih.EndKey)
+                message := (erreur != "") ? erreur : "Nouveau raccourci enregistré : " NomRaccourci(Cfg[type])
+                couleur := (erreur != "") ? TH.rouge : TH.vert
+            }
+        }
+        this.RendreTouches(type)
+        this.statutTouches.Opt("c" couleur)
+        this.statutTouches.Value := message
+    }
+
+    AppliquerRaccourci(type, nouveau) {
+        ancien := Cfg[type]
+        autre := (type = "hk_menu") ? Cfg["hk_correction"] : Cfg["hk_menu"]
+        if (nouveau = autre)
+            return "Cette combinaison est déjà utilisée par l'autre raccourci."
+        fn := (type = "hk_menu") ? RaccourciMenu : RaccourciCorrection
+        try Hotkey(nouveau, fn, "On")
+        catch
+            return "Cette combinaison n'est pas utilisable, essaie-en une autre."
+        if (ancien != nouveau)
+            try Hotkey(ancien, "Off")
+        IniWrite(nouveau, FICHIER_INI, "Raccourcis", (type = "hk_menu") ? "Menu" : "Correction")
+        ChargerConfig()
+        ConstruireMenuPlume()           ; met à jour l'indication dans le menu
+        return ""
+    }
+
+    ; ----- Onglet 3 : options -------------------------------------------------
+    ConstruirePageOptions() {
+        this.EnTete("Options", "Règle le comportement de Plume. Les changements sont enregistrés tout de suite.")
+        this.LigneOption("apercu", "Aperçu avant de remplacer", "Montre le résultat dans une fenêtre avant de l'insérer.", 112)
+        this.LigneOption("secours", "Secours automatique", "Si un moteur est saturé, Plume passe tout seul à un autre.", 196)
+        this.LigneOption("demarrage", "Lancer au démarrage de Windows", "Plume est prêt dès que tu allumes ton ordinateur.", 280)
+    }
+
+    LigneOption(cle, titre, desc, y) {
+        x := 248
+        k := this.Carte(x, y, 548, 74)
+        o := {x: x, y: y}
+        this.Police(11, "bold")
+        o.titre := this.T(Format("x{} y{} w430 h24 0x200 c{} Background{}", x + 22, y + 13, TH.texte, TH.carte), titre)
+        this.Police(9)
+        o.desc := this.T(Format("x{} y{} w430 h20 0x200 c{} Background{}", x + 22, y + 39, TH.gris, TH.carte), desc)
+        this.Police(10)
+        o.piste := this.T(Format("x{} y{} w48 h26 Background{}", x + 478, y + 24, TH.piste), "", true)
+        Arrondir(o.piste, 13)
+        o.bouton := this.T(Format("x{} y{} w18 h18 BackgroundFFFFFF", x + 482, y + 28), "")
+        Arrondir(o.bouton, 9)
+        fn := ObjBindMethod(this, "BasculerOption", cle)
+        for c in [k.dedans, o.titre, o.desc, o.piste, o.bouton]
+            this.Clic(c, fn)
+        this.options[cle] := o
+    }
+
+    EtatOption(cle) {
+        switch cle {
+            case "apercu": return (Cfg["apercu"] = "1")
+            case "secours": return (Cfg["secours"] = "1")
+            case "demarrage": return (FileExist(LIEN_DEMARRAGE) != "")
+        }
+        return false
+    }
+
+    PeindreOption(cle) {
+        o := this.options[cle]
+        actif := this.EtatOption(cle)
+        o.piste.Opt("Background" (actif ? TH.accent : TH.piste))
+        o.bouton.Move(o.x + (actif ? 504 : 482), o.y + 28)
+        Arrondir(o.bouton, 9)
+        o.piste.Redraw()
+        o.bouton.Redraw()
+    }
+
+    BasculerOption(cle, *) {
+        actif := !this.EtatOption(cle)
+        switch cle {
+            case "apercu": IniWrite(actif ? "1" : "0", FICHIER_INI, "Options", "Apercu")
+            case "secours": IniWrite(actif ? "1" : "0", FICHIER_INI, "Options", "Secours")
+            case "demarrage":
+                if actif
+                    CreerLienDemarrage()
+                else
+                    try FileDelete(LIEN_DEMARRAGE)
+        }
+        ChargerConfig()
+        this.PeindreOption(cle)
+    }
+
+    ; ----- Onglet 4 : à propos ------------------------------------------------
+    ConstruirePageAPropos() {
+        if FileExist(ICONE)
+            this.pages[this.pc].Push(this.g.AddPicture(Format("x248 y30 w64 h64 Background{}", TH.fond), ICONE))
+        this.Police(22, "bold")
+        this.T(Format("x330 y28 w460 h42 c{} Background{}", TH.texte, TH.fond), "Plume")
+        this.Police(10)
+        this.T(Format("x331 y72 w460 h22 c{} Background{}", TH.gris, TH.fond), "Version " VERSION "  ·  ton assistant d'écriture personnel")
+        this.Carte(248, 120, 548, 168)
+        this.Police(11, "bold")
+        this.T(Format("x272 y138 w500 h24 c{} Background{}", TH.texte, TH.carte), "Comment l'utiliser")
+        this.Police(10)
+        this.aide := this.T(Format("x272 y172 w500 h104 c{} Background{}", TH.gris, TH.carte), "")
+        this.Bouton(248, 308, 240, 42, "Ouvrir le dossier de Plume", false, (*) => Run(A_ScriptDir))
+        this.Bouton(502, 308, 190, 42, "Ouvrir plume.ini", false, (*) => Run('notepad.exe "' FICHIER_INI '"'))
+    }
+
+    Fermer() {
+        global gParam, gSurvols, gCliquables
+        if (this.capture != "")
+            return
+        SetTimer(VerifierSortie, 0)
+        SortirSurvol()
+        gSurvols := Map()
+        gCliquables := Map()
+        this.g.Destroy()
+        gParam := ""
+    }
+}
+
+; ----- Outils graphiques ------------------------------------------------------
+
+; Arrondit les coins d'un contrôle (rayon en pixels logiques)
+Arrondir(ctrl, rayon) {
+    rc := Buffer(16, 0)
+    DllCall("GetWindowRect", "ptr", ctrl.Hwnd, "ptr", rc)
+    w := NumGet(rc, 8, "int") - NumGet(rc, 0, "int")
+    h := NumGet(rc, 12, "int") - NumGet(rc, 4, "int")
+    d := Round(rayon * A_ScreenDPI / 96) * 2
+    rgn := DllCall("CreateRoundRectRgn", "int", 0, "int", 0, "int", w + 1, "int", h + 1, "int", d, "int", d, "ptr")
+    DllCall("SetWindowRgn", "ptr", ctrl.Hwnd, "ptr", rgn, "int", true)
+}
+
+; Place les fonds colorés sous tous les autres contrôles, dans le bon ordre
+AuFond(ctrls) {
+    i := ctrls.Length
+    while (i >= 1) {
+        DllCall("SetWindowPos", "ptr", ctrls[i].Hwnd, "ptr", 1, "int", 0, "int", 0, "int", 0, "int", 0, "uint", 0x13)
+        i--
+    }
+}
+
+; Barre de titre sombre et assortie (Windows 10 et 11)
+TitreSombre(hwnd) {
+    for attr, valeur in Map(20, 1, 35, CouleurRef(TH.barre), 36, CouleurRef(TH.texte), 34, CouleurRef(TH.bord)) {
+        v := valeur
+        try DllCall("dwmapi\DwmSetWindowAttribute", "ptr", hwnd, "int", attr, "int*", &v, "int", 4)
+    }
+}
+
+CouleurRef(hex) {           ; "RRGGBB" -> 0x00BBGGRR
+    v := Integer("0x" hex)
+    return ((v & 0xFF) << 16) | (v & 0xFF00) | ((v >> 16) & 0xFF)
+}
+
+Peindre(c, couleur) {
+    try {
+        c.Opt("Background" couleur)
+        c.Redraw()
+    }
+}
+
+Abreger(t, n) {
+    t := StrReplace(StrReplace(t, "`r", ""), "`n`n", "`n")
+    return (StrLen(t) > n) ? SubStr(t, 1, n) "..." : t
+}
+
+; Effet de survol
+SurvolSouris(wParam, lParam, msg, hwnd) {
+    global gSurvolEntree
+    entree := gSurvols.Has(hwnd) ? gSurvols[hwnd] : 0
+    if (IsObject(entree) && IsObject(gSurvolEntree) && ObjPtr(entree) = ObjPtr(gSurvolEntree))
+        return
+    SortirSurvol()
+    if IsObject(entree) {
+        gSurvolEntree := entree
+        entree.entrer()
+        SetTimer(VerifierSortie, 120)
+    }
+}
+
+SortirSurvol() {
+    global gSurvolEntree
+    if IsObject(gSurvolEntree) {
+        e := gSurvolEntree
+        gSurvolEntree := 0
+        try e.sortir()
+    }
+}
+
+VerifierSortie() {
+    ctl := 0
+    try MouseGetPos(, , , &ctl, 2)
+    entree := (ctl && gSurvols.Has(ctl)) ? gSurvols[ctl] : 0
+    if (!IsObject(gSurvolEntree) || !IsObject(entree) || ObjPtr(entree) != ObjPtr(gSurvolEntree)) {
+        SortirSurvol()
+        SetTimer(VerifierSortie, 0)
+    }
+}
+
+; Curseur « main » sur les éléments cliquables
+CurseurMain(wParam, lParam, msg, hwnd) {
+    if gCliquables.Has(wParam) {
+        DllCall("SetCursor", "ptr", DllCall("LoadCursor", "ptr", 0, "ptr", 32649, "ptr"))
+        return true
     }
 }
 
