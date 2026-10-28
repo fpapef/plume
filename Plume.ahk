@@ -902,7 +902,7 @@ class FenetreParametres {
     ConstruireBarre() {
         this.T("x0 y0 w220 h600 Background" TH.barre, "", true, 0)
         if FileExist(ICONE)
-            this.g.AddPicture("x22 y24 w42 h42 Background" TH.barre, ICONE)
+            this.g.AddPicture("x22 y24 w42 h42 BackgroundTrans", ICONE)
         this.Police(17, "bold")
         this.T(Format("x76 y22 w130 h30 c{} Background{}", TH.texte, TH.barre), "Plume", false, 0)
         this.Police(9)
@@ -1000,7 +1000,7 @@ class FenetreParametres {
         }
         this.Bouton(248, y + 12, 250, 42, "Tester le moteur principal", true, ObjBindMethod(this, "TesterMoteur"))
         this.Police(9)
-        this.statut := this.T(Format("x514 y{} w282 h58 c{} Background{}", y + 6, TH.gris, TH.fond), "")
+        this.zoneStatut := this.T(Format("x514 y{} w282 h58 c{} Background{}", y + 6, TH.gris, TH.fond), "")
         this.Police(10)
     }
 
@@ -1109,9 +1109,9 @@ class FenetreParametres {
     }
 
     Statut(texte, couleur) {
-        this.statut.Opt("c" couleur)
-        this.statut.Value := texte
-        this.statut.Redraw()
+        this.zoneStatut.Opt("c" couleur)
+        this.zoneStatut.Value := texte
+        this.zoneStatut.Redraw()
     }
 
     ; ----- Onglet 2 : raccourcis ---------------------------------------------
@@ -1300,7 +1300,7 @@ class FenetreParametres {
     ; ----- Onglet 4 : à propos ------------------------------------------------
     ConstruirePageAPropos() {
         if FileExist(ICONE)
-            this.pages[this.pc].Push(this.g.AddPicture(Format("x248 y30 w64 h64 Background{}", TH.fond), ICONE))
+            this.pages[this.pc].Push(this.g.AddPicture("x248 y30 w64 h64 BackgroundTrans", ICONE))
         this.Police(22, "bold")
         this.T(Format("x330 y28 w460 h42 c{} Background{}", TH.texte, TH.fond), "Plume")
         this.Police(10)
